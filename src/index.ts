@@ -1,5 +1,4 @@
 import dotenv from "dotenv";
-import axios from "axios";
 import fs from "fs";
 
 dotenv.config();
@@ -13,28 +12,40 @@ class Agent {
     this.apiKey = apiKey;
   }
 
-  async callOpenAI(prompt: string, model: string = "gpt-4"): Promise<string> {
+  async callOpenAI(
+    prompt: string,
+    model: string = "gpt-4"
+  ): Promise<string | false> {
+    const url = "https://api.openai.com/v1/chat/completions";
+    const data = {
+      model,
+      messages: [{ role: "user", content: prompt }],
+    };
+    const config = {
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+    };
     try {
-      const response = await axios.post(
-        "https://api.openai.com/v1/chat/completions",
-        {
-          model,
-          messages: [{ role: "user", content: prompt }],
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json",
-          },
+      const result = await fetch(url, {
+        method: "POST",
+        headers: config.headers,
+        body: JSON.stringify(data),
+      }).then((response) => {
+        if (!response.ok) {
+          throw new Error("Network response was not ok");
         }
-      );
+        return response.json();
+      });
+
       return (
-        response.data.choices[0].message?.content.trim() ||
-        "No response received."
+        result.choices[0].message?.content.trim() || "No response received."
       );
     } catch (error) {
-      console.error("Error calling OpenAI API:", error);
-      return "An error occurred while processing your request.";
+      // handle error
+      console.error("There was a problem with the fetch operation:", error);
+      return false;
     }
   }
 }
@@ -84,11 +95,15 @@ class WorkerAgent extends Agent {
     const previousGuidelines = this.memory.getGuidelinesForTask(taskType);
 
     console.log("Worker Agent: Performing task...");
-    return this.callOpenAI(`
+    const result = await this.callOpenAI(`
       Task: ${task}
       Guidelines from prior learning: ${previousGuidelines}
-      Perform the task with the above context.
+      Perform the task with the above context and don't hallucinate or make things up.
     `);
+    if (!result) {
+      throw new Error("Failed to get response from OpenAI.");
+    }
+    return result;
   }
 }
 
@@ -110,8 +125,11 @@ class EvaluatorAgent extends Agent {
       Task: ${task}	  
       Output: ${output}
 
-      Provide generic/general detailed feedback for ${taskType} (don't mention ANY specifics that are in the Task and/or Output, keep it all GENERAL about ${taskType}) and give general suggestions for improving ${taskType}. All suggestions should be generic and reusable for new tasks like ${taskType}
+      Provide generic/general detailed feedback for ${taskType} (don't mention ANY specifics that are in the Task and/or Output, keep it all GENERAL about ${taskType}) and give general suggestions for improving ${taskType}. All suggestions should be generic and reusable for new tasks like ${taskType}  (don't hallucinate or make things up)
     `);
+    if (!feedback) {
+      throw new Error("Failed to get response from OpenAI.");
+    }
 
     console.log("Evaluator Agent: Updating memory...");
     this.memory.addMemory(taskType, feedback);
@@ -147,9 +165,13 @@ class FeedbackLoop {
       );
       console.log("Evaluator Feedback:", feedback);
 
-      output = await this.worker.callOpenAI(
-        `Improve the output for the task based on this feedback:\nTask: ${task}\nCurrent Output: ${output}\nFeedback: ${feedback}`
+      const result = await this.worker.callOpenAI(
+        `Improve the output for the task based on this feedback (don't hallucinate or make things up):\nTask: ${task}\nCurrent Output: ${output}\nFeedback: ${feedback}`
       );
+      if (!result) {
+        throw new Error("Failed to get response from OpenAI.");
+      }
+      output = result;
     }
 
     console.log("Final Improved Output:", output);
