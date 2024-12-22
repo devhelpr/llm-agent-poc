@@ -4,9 +4,7 @@ This project has a simple feedback loop that performs a simple task using an LLM
 
 ## HOW TO RUN
 
-npx ts-node src/index.ts
-
-
+npm run dev
 
 ## LINKS WITH INFO
 
